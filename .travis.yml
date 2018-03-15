@@ -1,0 +1,70 @@
+language: php
+
+php:
+  - 5.6
+  - 7.0
+  - 7.1
+
+services:
+  - postgresql
+
+before_install:
+  - sudo apt-get update > /dev/null
+  - sudo apt-get install apache2 -y
+  - sudo apt-get install postfix -y
+  - composer self-update
+  - composer global require drush/drush:8
+
+install:
+  # setup fake mailserver
+  - sudo service postfix stop
+  - smtp-sink -d "%d.%H.%M.%S" 127.0.0.1:2500 1000 &
+  - echo -e '#!/usr/bin/env bash\nexit 0' | sudo tee /usr/sbin/sendmail
+  - echo 'sendmail_path = "/usr/sbin/sendmail -t -i "' | sudo tee "$HOME/.phpenv/versions/`php -i | grep "PHP Version" | head -n 1 | grep -o -P '\d+\.\d+\.\d+.*'`/etc/conf.d/sendmail.ini"
+  # set up environment variables
+  - export PATH="$HOME/.config/composer/vendor/bin:$PATH"
+  - export DRUPAL_ROOT="$HOME/build/$TRAVIS_REPO_SLUG/drupal-7.x-dev"
+  # create postgres user and db
+  - psql -c "create user drupal with password 'drupal';" -U postgres
+  - psql -c "create database drupal with owner drupal;" -U postgres
+  # download drupal 7.x
+  - drush dl drupal-7.x
+  # install drupal 7.x
+  - cd $DRUPAL_ROOT
+  - drush --verbose site-install --db-url=pgsql://drupal:drupal@127.0.0.1/drupal --db-su='drupal' --db-su-pw='drupal' --yes
+  # clear drupal caches
+  - drush cc all --yes
+  # apply postgres patch for drupal
+  - wget --no-check-certificate https://drupal.org/files/drupal.pgsql-bytea.27.patch
+  - patch -p1 < drupal.pgsql-bytea.27.patch
+  # install tripal's pre-requisite drupal modules
+  - drush pm-download ctools
+  - drush pm-enable ctools -y
+  - drush pm-download views
+  - drush pm-enable views views_ui -y
+  # install tripal 2.x via download
+  - drush pm-download tripal
+  - cd $DRUPAL_ROOT/sites/all/modules
+  - cd views; patch -p1 < ../tripal/tripal_views/views-sql-compliant-three-tier-naming-1971160-22.patch; cd ..
+  # enable tripal 2.x
+  - drush pm-enable tripal_core -y
+  # disable tripal 2.x
+  - drush pm-disable tripal_core -y
+  - mv tripal ../tripal-2.x
+  # install tripal 3.x from github
+  - git clone https://github.com/tripal/tripal.git
+  - drush pm-enable tripal -y
+  - drush pm-enable tripal_chado -y
+  # run chado prepare tripal_job . appears broken. comment for now.
+  # - drush trp-prepare-chado --username=admin
+  # enable optional tripal modules
+  - drush pm-enable tripal_ds tripal_ws -y
+  # clear drupal caches
+  - drush cc all --yes
+  # check drupal status
+  - drush status
+
+before_script:
+  - drush runserver 127.0.0.1:8080 &
+
+script: /bin/true
