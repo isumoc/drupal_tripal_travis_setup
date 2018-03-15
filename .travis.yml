@@ -1,0 +1,43 @@
+language: php
+
+php:
+  - 5.6
+  - 7.1
+
+services:
+  - postgresql
+
+before_install:
+  - sudo apt-get update > /dev/null
+  - sudo apt-get install apache2 -y
+  - composer self-update
+  - composer global require drush/drush:8
+
+install:
+  - export PATH="$HOME/.config/composer/vendor/bin:$PATH"
+  - export DRUPAL_ROOT="$HOME/build/$TRAVIS_REPO_SLUG/drupal-7.x-dev"
+  - psql -c "create user drupal with password 'drupal';" -U postgres
+  - psql -c "create database drupal with owner drupal;" -U postgres
+  - drush dl drupal-7.x
+  - cd $DRUPAL_ROOT
+  - drush --verbose site-install --db-url=pgsql://drupal:drupal@127.0.0.1/drupal --db-su='drupal' --db-su-pw='drupal' --yes
+  - drush cc all --yes
+  - drush pm-download views ctools entity
+  - drush pm-enable views views_ui ctools entity -y
+  - drush pm-download ds field_group field_group_table field_formatter_class field_formatter_settings
+  - drush pm-enable ds field_group field_group_table field_formatter_class field_formatter_settings -y
+  - cd $DRUPAL_ROOT
+  - wget --no-check-certificate https://drupal.org/files/drupal.pgsql-bytea.27.patch
+  - patch -p1 < drupal.pgsql-bytea.27.patch
+  - cd $DRUPAL_ROOT/sites/all/modules
+  - git clone https://github.com/tripal/tripal.git
+  - cd views; patch -p1 < ../tripal/tripal_chado_views/views-sql-compliant-three-tier-naming-1971160-30.patch
+  - cd $DRUPAL_ROOT
+  - drush pm-enable tripal tripal_chado -y
+  - drush pm-enable tripal_ds tripal_ws -y
+  - drush status
+
+before_script:
+  - drush runserver 127.0.0.1:8080 &
+
+script: /bin/true
